@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firestore explorer</title>
+<style>
+  :root { --bg:#fafaf7; --fg:#1d2320; --muted:#5f6b65; --line:#d9ddd6; --accent:#1f5f4a; --code:#f0f1ec; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161a18; --fg:#e8ebe6; --muted:#9aa59e; --line:#2c3430; --accent:#6fcf9f; --code:#1f2522; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; }
+  button { font:inherit; padding:10px 18px; border-radius:6px; border:1px solid var(--accent);
+           background:var(--accent); color:var(--bg); cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); margin-left:8px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+  #status { margin:16px 0; color:var(--muted); }
+  #status.error { color:#c0392b; }
+  details { border-top:1px solid var(--line); padding:12px 0; }
+  summary { cursor:pointer; font-weight:600; }
+  summary span { color:var(--muted); font-weight:400; margin-left:8px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:.9rem; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td:first-child { font-family:ui-monospace, monospace; }
+  pre { background:var(--code); padding:12px; border-radius:6px; overflow-x:auto; font-size:.8rem; }
+  h3 { font-size:.95rem; margin:16px 0 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Firestore explorer</h1>
+  <p class="sub">Lists every collection, its fields, and all sample documents.</p>
+  <button id="fetch">Fetch database structure</button>
+  <button id="download" class="secondary" hidden>Download JSON</button>
+  <div id="status" role="status"></div>
+  <div id="out"></div>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  let last = null;
+
+  const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+  $("fetch").onclick = async () => {
+    $("fetch").disabled = true;
+    $("status").className = ""; $("status").textContent = "Reading the database…";
+    $("out").innerHTML = ""; $("download").hidden = true;
+    try {
+      const res = await fetch("/api/discover");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      last = data;
+      const names = Object.keys(data.collections);
+      $("status").textContent = `Project ${data.projectId}: ${names.length} collection paths found.`;
+      $("out").innerHTML = names.map(n => {
+        const c = data.collections[n];
+        const rows = Object.entries(c.fields)
+          .map(([f, t]) => `<tr><td>${esc(f)}</td><td>${esc(t.join(" | "))}</td></tr>`).join("");
+        return `<details><summary>${esc(n)}<span>${c.docCount} documents</span></summary>
+          <h3>Fields</h3><table><tr><th>Field</th><th>Types seen</th></tr>${rows}</table>
+          <h3>Sample documents</h3><pre>${esc(JSON.stringify(c.samples, null, 2))}</pre></details>`;
+      }).join("");
+      $("download").hidden = false;
+    } catch (e) {
+      $("status").className = "error";
+      $("status").textContent = "Failed: " + e.message;
+    } finally { $("fetch").disabled = false; }
+  };
+
+  $("download").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(last, null, 2)], {type:"application/json"}));
+    a.download = "firestore-report.json"; a.click();
+  };
+</script>
+</body>
+</html>
