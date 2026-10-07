@@ -3,8 +3,15 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+ 
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "check": "tsc",
+    "export:sql": "tsx export.ts",
+    "export:json": "tsx export-json.ts",
+    "json:sql": "tsx json-to-sql.ts"
   },
   "keywords": [],
   "author": "",
