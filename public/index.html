@@ -3,38 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
 <title>Firestore explorer</title>
-<style>
-  :root { --bg:#fafaf7; --fg:#1d2320; --muted:#5f6b65; --line:#d9ddd6; --accent:#1f5f4a; --code:#f0f1ec; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#161a18; --fg:#e8ebe6; --muted:#9aa59e; --line:#2c3430; --accent:#6fcf9f; --code:#1f2522; }
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, sans-serif; }
-  main { max-width: 900px; margin: 0 auto; padding: 40px 20px 80px; }
-  h1 { font-size: 1.6rem; margin: 0 0 4px; }
-  p.sub { color: var(--muted); margin: 0 0 24px; }
-  button { font:inherit; padding:10px 18px; border-radius:6px; border:1px solid var(--accent);
-           background:var(--accent); color:var(--bg); cursor:pointer; }
-  button.secondary { background:transparent; color:var(--accent); margin-left:8px; }
-  button:disabled { opacity:.5; cursor:wait; }
-  button:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
-  #status { margin:16px 0; color:var(--muted); }
-  #status.error { color:#c0392b; }
-  details { border-top:1px solid var(--line); padding:12px 0; }
-  summary { cursor:pointer; font-weight:600; }
-  summary span { color:var(--muted); font-weight:400; margin-left:8px; }
-  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:.9rem; }
-  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
-  td:first-child { font-family:ui-monospace, monospace; }
-  pre { background:var(--code); padding:12px; border-radius:6px; overflow-x:auto; font-size:.8rem; }
-  h3 { font-size:.95rem; margin:16px 0 4px; }
-</style>
 </head>
 <body>
 <main>
   <h1>Firestore explorer</h1>
-  <p class="sub">Lists every collection, its fields, and all sample documents.</p>
+  <p class="sub">Pick a collection to view and download it, or fetch the structure of the whole database.</p>
+
+  <section class="pick">
+    <h2>One collection</h2>
+    <label for="col">Collection</label>
+    <select id="col"><option value="">Loading…</option></select>
+    <button id="view" disabled>View</button>
+    <button id="dlJson" class="secondary" disabled>Download JSON</button>
+    <button id="dlSql" class="secondary" disabled>Download SQL</button>
+    <div id="colStatus" role="status"></div>
+    <div id="colOut"></div>
+  </section>
+
+  <h2>Whole database</h2>
   <button id="fetch">Fetch database structure</button>
   <button id="download" class="secondary" hidden>Download JSON</button>
   <div id="status" role="status"></div>
@@ -71,6 +59,72 @@
       $("status").textContent = "Failed: " + e.message;
     } finally { $("fetch").disabled = false; }
   };
+
+ 
+  let cols = [];
+
+  async function loadCollections() {
+    try {
+      const res = await fetch("/api/collections");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      cols = data.collections;
+      $("col").innerHTML = '<option value="">Choose a collection…</option>' +
+        cols.map(c => `<option value="${esc(c.name)}">${esc(c.name)} (${c.count})</option>`).join("");
+    } catch (e) {
+      $("col").innerHTML = '<option value="">Could not load</option>';
+      $("colStatus").className = "error";
+      $("colStatus").textContent = "Failed: " + e.message;
+    }
+  }
+
+  $("col").onchange = () => {
+    const c = cols.find(x => x.name === $("col").value);
+    $("view").disabled = !c;
+    $("dlJson").disabled = !c;
+    $("dlSql").disabled = !c;
+    $("colOut").innerHTML = ""; $("colStatus").className = "";
+    $("colStatus").textContent = !c ? "" : c.custom
+      ? "SQL uses a hand-made table design for this collection."
+      : "SQL tables are designed automatically from the data (including any subcollections).";
+  };
+
+  const cell = v => v !== null && typeof v === "object"
+    ? `<pre>${esc(JSON.stringify(v, null, 1))}</pre>` : esc(v ?? "");
+
+  $("view").onclick = async () => {
+    const name = $("col").value;
+    $("view").disabled = true;
+    $("colStatus").className = ""; $("colStatus").textContent = `Reading ${name}…`;
+    $("colOut").innerHTML = "";
+    try {
+      const res = await fetch("/api/collection/" + encodeURIComponent(name));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const fields = ["_id", ...new Set(data.docs.flatMap(d => Object.keys(d).filter(k => k !== "_id" && k !== "__subcollections")))];
+      const subs = [...new Set(data.docs.flatMap(d => Object.keys(d.__subcollections || {})))];
+      $("colOut").innerHTML = `<div class="scroll"><table><tr>${fields.map(f => `<th>${esc(f)}</th>`).join("")}` +
+        `${subs.map(s => `<th>↳ ${esc(s)} (subcollection)</th>`).join("")}</tr>` +
+        data.docs.map(d => `<tr>${fields.map(f => `<td>${cell(d[f])}</td>`).join("")}` +
+          `${subs.map(s => `<td>${cell((d.__subcollections || {})[s])}</td>`).join("")}</tr>`).join("") + `</table></div>`;
+      $("colStatus").textContent = data.total > data.shown
+        ? `Showing the first ${data.shown} of ${data.total} documents. The download contains all ${data.total}.`
+        : `Showing all ${data.total} documents.`;
+    } catch (e) {
+      $("colStatus").className = "error";
+      $("colStatus").textContent = "Failed: " + e.message;
+    } finally { $("view").disabled = false; }
+  };
+
+  const save = format => {
+    const a = document.createElement("a");
+    a.href = `/api/collection/${encodeURIComponent($("col").value)}/download?format=${format}`;
+    a.click();
+  };
+  $("dlJson").onclick = () => save("json");
+  $("dlSql").onclick = () => save("sql");
+
+  loadCollections();
 
   $("download").onclick = () => {
     const a = document.createElement("a");
